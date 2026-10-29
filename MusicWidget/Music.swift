@@ -46,15 +46,18 @@ enum Music {
         return {}
         """
 
+    // Streamed songs can take seconds to hand over a cover, and every read waits behind this one.
     static let artworkScript = """
         if application id "\(bundleID)" is running then
             tell application id "\(bundleID)"
-                try
-                    return raw data of artwork 1 of current track
-                end try
-                try
-                    return data of artwork 1 of current track
-                end try
+                with timeout of 2 seconds
+                    try
+                        return raw data of artwork 1 of current track
+                    end try
+                    try
+                        return data of artwork 1 of current track
+                    end try
+                end timeout
             end tell
         end if
         """
@@ -63,9 +66,31 @@ enum Music {
         "tell application id \"\(bundleID)\" to \(command.rawValue)"
     }
 
-    /// Launches Music if it isn't running, like pressing play on the keyboard.
+    /// Sends the button straight to Music as an Apple event and doesn't wait for a reply, so it never
+    /// queues behind a slow read. If Music isn't running, AppleScript instead, which launches it.
     static func send(_ command: PlayerCommand) {
-        queue.async { _ = try? run(commandScript(command)) }
+        guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty else {
+            queue.async { _ = try? run(commandScript(command)) }
+            return
+        }
+        let event = NSAppleEventDescriptor(
+            eventClass: fourCharCode("hook"), eventID: fourCharCode(eventID(command)),
+            targetDescriptor: NSAppleEventDescriptor(bundleIdentifier: bundleID),
+            returnID: -1, transactionID: 0)   // kAutoGenerateReturnID, kAnyTransactionID
+        _ = try? event.sendEvent(options: [.noReply], timeout: 1)
+    }
+
+    /// Music's own code for each command, after the "hook" class: `next track` is hookNext.
+    static func eventID(_ command: PlayerCommand) -> String {
+        switch command {
+        case .previous: "Prev"
+        case .playPause: "PlPs"
+        case .next: "Next"
+        }
+    }
+
+    static func fourCharCode(_ code: String) -> FourCharCode {
+        code.utf8.reduce(0) { $0 << 8 | FourCharCode($1) }
     }
 
     static func snapshot() async -> Snapshot {

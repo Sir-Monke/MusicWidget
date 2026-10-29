@@ -20,12 +20,12 @@ struct NowPlayingState: Codable, Equatable {
     /// When the song would have started had it played straight through, so the widget's clock can run by itself.
     var start: Date { asOf.addingTimeInterval(-elapsed) }
 
-    /// When the widget should redraw to move its progress bar: every few seconds until the song
-    /// ends while it plays (at most 40 times), otherwise once.
+    /// When the widget should redraw to move its progress bar: a dozen times or fewer until the song
+    /// ends while it plays, otherwise once. macOS draws every one up front, so more makes skips slow.
     func entryDates(from now: Date = .now) -> [Date] {
         let left = start.addingTimeInterval(duration).timeIntervalSince(now)
         guard isPlaying, duration > 0, left > 0 else { return [now] }
-        return stride(from: 0, to: left, by: max(3, left / 40)).map { now.addingTimeInterval($0) }
+        return stride(from: 0, to: left, by: max(5, left / 12)).map { now.addingTimeInterval($0) }
     }
 
     /// Same song and state, with the clock within a second of where it was. Music posts several

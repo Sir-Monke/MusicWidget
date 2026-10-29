@@ -107,8 +107,19 @@ func enableLoginItemOnce() {
 
     let dates = playing.entryDates(from: playing.asOf)
     let end = playing.start.addingTimeInterval(playing.duration)
-    precondition(dates.first == playing.asOf && dates.count > 1 && dates.count <= 40 && dates.last! < end,
-                 "a playing song gets a redraw every few seconds until it ends, at most 40")
+    precondition(dates.first == playing.asOf && dates.count > 1 && dates.count <= 12 && dates.last! < end,
+                 "a playing song gets a few redraws until it ends, at most 12")
+    precondition(Music.fourCharCode("hook") == 0x686F_6F6B, "Apple event codes pack like the C literal 'hook'")
+    if let music = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Music.bundleID),
+       let name = Bundle(url: music)?.object(forInfoDictionaryKey: "OSAScriptingDefinition") as? String,
+       let dictionary = try? String(contentsOf: music.appendingPathComponent("Contents/Resources/\(name)"), encoding: .utf8) {
+        for command in PlayerCommand.allCases {
+            precondition(dictionary.contains("name=\"\(command.rawValue)\" code=\"hook\(Music.eventID(command))\""),
+                         "Music's dictionary has \(command.rawValue) as hook\(Music.eventID(command))")
+        }
+    } else {
+        print("selftest: Music's scripting dictionary not found, command codes unchecked")
+    }
     precondition(paused.entryDates(from: playing.asOf) == [playing.asOf], "a paused song gets one")
     precondition(playing.entryDates(from: end.addingTimeInterval(5)).count == 1, "a song that's over gets one")
 
