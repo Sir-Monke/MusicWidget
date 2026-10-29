@@ -18,9 +18,19 @@ enum Music {
 
     enum Snapshot {
         case track(Track)
+        /// Stopped, or Music isn't open.
         case nothing
+        /// Playing or paused, but Music can't say what yet: between songs, or loading one.
+        case busy
         case notAuthorised
         case failed
+
+        var isSettled: Bool {
+            switch self {
+            case .nothing, .busy: false
+            default: true
+            }
+        }
     }
 
     // The `is running` checks stop a status or artwork read from launching Music.
@@ -40,6 +50,7 @@ enum Music {
                         end try
                         return {player state is playing, name of t, artist of t, album of t, p, d}
                     end try
+                    return {"busy"}
                 end if
             end tell
         end if
@@ -111,6 +122,7 @@ enum Music {
         await onQueue { () -> Snapshot in
             do {
                 let list = try run(status)
+                if list.numberOfItems == 1 { return .busy }
                 guard list.numberOfItems == 6 else { return .nothing }
                 return .track(Track(
                     isPlaying: list.atIndex(1)?.booleanValue ?? false,
@@ -235,15 +247,14 @@ final class Publisher {
         refreshTask?.cancel()
         refreshTask = Task {
             var snapshot = await Music.snapshot()
-            // Mid-skip, or while a stream buffers, Music can say nothing is playing for a few seconds, and it
-            // doesn't always post again once the song starts. So while Music is open, keep checking every
-            // second for a while; after two the widget says Not Playing, in case it really has stopped.
+            // As one song hands over to the next, Music can't say what's playing for a moment, and it
+            // doesn't post again once it can. So while Music is open, keep checking every second for a
+            // while, showing the last song meanwhile. Only a stop that lasts two seconds shows Not Playing.
             // Any new notification cancels this and starts over.
-            for second in 1...15 {
-                guard case .nothing = snapshot, Music.isRunning else { break }
+            for second in 1...15 where !snapshot.isSettled && Music.isRunning {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled else { return }
-                if second == 2 { await show(.nothing) }
+                if second == 2, case .nothing = snapshot { await show(.nothing) }
                 snapshot = await Music.snapshot()
             }
             await show(snapshot)
@@ -253,7 +264,7 @@ final class Publisher {
     private func show(_ snapshot: Music.Snapshot) async {
         var next: NowPlayingState
         switch snapshot {
-        case .failed:
+        case .failed, .busy:
             return // transient, keep what's showing
         case .nothing:
             next = NowPlayingState()
