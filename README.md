@@ -10,6 +10,13 @@
   <img src="https://img.shields.io/badge/built%20with-WidgetKit-D6943D?logo=swift&logoColor=white" alt="Built with WidgetKit">
 </p>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.webp">
+    <img src="docs/hero-light.webp" width="520" alt="The Music Widget on the desktop: album cover on the left, song and artist on the right, a progress bar with elapsed and remaining time, and back, pause and skip buttons">
+  </picture>
+</p>
+
 ## Install
 
 1. Download `MusicWidget.zip` from the [latest release](https://github.com/Sir-Monke/MusicWidget/releases/latest) and unzip it.
@@ -21,7 +28,8 @@
 ## What it does
 
 - **Two tiles wide.** Album cover on the left, song and artist on the right, controls underneath.
-- **Keeps up.** Changes the moment Music skips, pauses or starts a new song.
+- **Shows where you are.** A progress bar with time played and time left, running live.
+- **Keeps up.** Slides to the next song the moment Music skips, pauses or moves on.
 - **Controls Music.** Back, play/pause and skip, straight from the desktop.
 - **Private.** Talks only to Music on your Mac. When a streamed song has no cover, it looks one up on the iTunes Search API.
 
@@ -36,6 +44,8 @@ Open `MusicWidget.xcodeproj` in Xcode and press Run. Music Widget copies itself 
 ```sh
 /Applications/MusicWidget.app/Contents/MacOS/MusicWidget --selftest
 ```
+
+To redraw the images above, tick the `--render-docs` argument under Edit Scheme › Run › Arguments and press Run. They're saved as PNGs in `docs/frames`.
 
 ## Remove
 

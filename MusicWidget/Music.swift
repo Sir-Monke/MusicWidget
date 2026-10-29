@@ -12,6 +12,8 @@ enum Music {
         var title: String
         var artist: String
         var album: String
+        var elapsed: TimeInterval
+        var duration: TimeInterval
     }
 
     enum Snapshot {
@@ -28,7 +30,15 @@ enum Music {
                 if player state is not stopped then
                     try
                         set t to current track
-                        return {player state is playing, name of t, artist of t, album of t}
+                        set p to 0
+                        set d to 0
+                        try
+                            set p to player position as real
+                        end try
+                        try
+                            set d to (duration of t) as real
+                        end try
+                        return {player state is playing, name of t, artist of t, album of t, p, d}
                     end try
                 end if
             end tell
@@ -62,12 +72,14 @@ enum Music {
         await onQueue { () -> Snapshot in
             do {
                 let list = try run(statusScript)
-                guard list.numberOfItems == 4 else { return .nothing }
+                guard list.numberOfItems == 6 else { return .nothing }
                 return .track(Track(
                     isPlaying: list.atIndex(1)?.booleanValue ?? false,
                     title: list.atIndex(2)?.stringValue ?? "",
                     artist: list.atIndex(3)?.stringValue ?? "",
-                    album: list.atIndex(4)?.stringValue ?? ""))
+                    album: list.atIndex(4)?.stringValue ?? "",
+                    elapsed: list.atIndex(5)?.doubleValue ?? 0,
+                    duration: list.atIndex(6)?.doubleValue ?? 0))
             } catch let error as ScriptError where error.code == -1743 {
                 return .notAuthorised
             } catch {
@@ -179,15 +191,15 @@ final class Publisher {
                 next = NowPlayingState(needsPermission: true)
             case .track(let track):
                 next = NowPlayingState(isPlaying: track.isPlaying, title: track.title,
-                                       artist: track.artist, album: track.album)
+                                       artist: track.artist, album: track.album,
+                                       duration: track.duration, elapsed: track.elapsed, asOf: .now)
                 if track.album == state.album, track.artist == state.artist {
                     next.artwork = state.artwork
                 } else if let image = await Music.artwork(artist: track.artist, album: track.album) {
                     next.artwork = Music.thumbnail(image)
                 }
             }
-            // Music posts several notifications per change; only reload when something differs.
-            guard !Task.isCancelled, next != state else { return }
+            guard !Task.isCancelled, !next.looksLike(state) else { return }
             state = next
             state.write()
             WidgetCenter.shared.reloadTimelines(ofKind: NowPlayingState.widgetKind)

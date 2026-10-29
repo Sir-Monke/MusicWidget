@@ -11,6 +11,7 @@
 		AA0000000000000000000021 /* Music.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* Music.swift */; };
 		AA0000000000000000000022 /* NowPlayingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* NowPlayingState.swift */; };
 		AA0000000000000000000023 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* Assets.xcassets */; };
+		AA0000000000000000000024 /* WidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000012 /* WidgetView.swift */; };
 		AA000000000000000000003D /* NowPlayingWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000034 /* NowPlayingWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AA0000000000000000000040 /* NowPlayingWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000031 /* NowPlayingWidget.swift */; };
 		AA0000000000000000000041 /* WidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000012 /* WidgetView.swift */; };
@@ -218,6 +219,7 @@
 				AA0000000000000000000020 /* MusicWidgetApp.swift in Sources */,
 				AA0000000000000000000021 /* Music.swift in Sources */,
 				AA0000000000000000000022 /* NowPlayingState.swift in Sources */,
+				AA0000000000000000000024 /* WidgetView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,4 +1,3 @@
-import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -30,28 +29,7 @@ struct Provider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
-        // The app reloads the widget whenever Music changes.
+        // The app reloads the widget whenever Music changes; the progress bar and times run by themselves.
         completion(Timeline(entries: [Entry(state: .read())], policy: .never))
-    }
-}
-
-/// Runs in the widget, which is sandboxed and can't reach Music, so it hands the command to the app.
-struct PlayerIntent: AppIntent {
-    static let title: LocalizedStringResource = "Control Music"
-
-    @Parameter(title: "Command") var command: String
-
-    init() {}
-
-    init(_ command: PlayerCommand) {
-        self.command = command.rawValue
-    }
-
-    func perform() async throws -> some IntentResult {
-        if let command = PlayerCommand(rawValue: command) {
-            DistributedNotificationCenter.default().postNotificationName(
-                command.notification, object: nil, userInfo: nil, deliverImmediately: true)
-        }
-        return .result()
     }
 }
