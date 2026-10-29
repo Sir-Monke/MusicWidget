@@ -1,8 +1,8 @@
 import AppKit
 import WidgetKit
 
-/// Talks to Music.app with AppleScript. NSAppleScript isn't thread-safe, so every
-/// script runs on one serial queue, which also keeps commands and reads in order.
+/// Talks to Music.app. NSAppleScript isn't thread-safe, so every script runs on one serial queue;
+/// the buttons skip that queue and send Apple events directly (see `send`).
 enum Music {
     static let bundleID = "com.apple.Music"
     private static let queue = DispatchQueue(label: "music.applescript")
@@ -62,6 +62,16 @@ enum Music {
         end if
         """
 
+    // Compiled once, on first use: compiling loads Music's whole dictionary, the slow part of every read.
+    private static let status = compiled(statusScript)
+    private static let artworkReader = compiled(artworkScript)
+
+    private static func compiled(_ source: String) -> NSAppleScript? {
+        let script = NSAppleScript(source: source)
+        _ = script?.compileAndReturnError(nil)
+        return script
+    }
+
     static func commandScript(_ command: PlayerCommand) -> String {
         "tell application id \"\(bundleID)\" to \(command.rawValue)"
     }
@@ -70,7 +80,7 @@ enum Music {
     /// queues behind a slow read. If Music isn't running, AppleScript instead, which launches it.
     static func send(_ command: PlayerCommand) {
         guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty else {
-            queue.async { _ = try? run(commandScript(command)) }
+            queue.async { _ = try? run(NSAppleScript(source: commandScript(command))) }
             return
         }
         let event = NSAppleEventDescriptor(
@@ -96,7 +106,7 @@ enum Music {
     static func snapshot() async -> Snapshot {
         await onQueue { () -> Snapshot in
             do {
-                let list = try run(statusScript)
+                let list = try run(status)
                 guard list.numberOfItems == 6 else { return .nothing }
                 return .track(Track(
                     isPlaying: list.atIndex(1)?.booleanValue ?? false,
@@ -114,7 +124,7 @@ enum Music {
     }
 
     static func artwork(artist: String, album: String) async -> NSImage? {
-        let data = await onQueue { try? run(artworkScript).data }
+        let data = await onQueue { try? run(artworkReader).data }
         if let data, let image = NSImage(data: data) { return image }
         return await searchArtwork(artist: artist, album: album)
     }
@@ -133,10 +143,11 @@ enum Music {
         ]
         struct Album: Decodable { let artworkUrl100: String }
         struct Response: Decodable { let results: [Album] }
-        guard let json = try? await URLSession.shared.data(from: search.url!).0,
+        // 5 seconds, not the default minute, so a bad connection can't leave a song without its cover for long.
+        guard let json = try? await URLSession.shared.data(for: URLRequest(url: search.url!, timeoutInterval: 5)).0,
               let small = try? JSONDecoder().decode(Response.self, from: json).results.first?.artworkUrl100,
               let large = URL(string: small.replacingOccurrences(of: "100x100", with: "600x600")),
-              let image = try? await URLSession.shared.data(from: large).0
+              let image = try? await URLSession.shared.data(for: URLRequest(url: large, timeoutInterval: 5)).0
         else { return nil }
         return NSImage(data: image)
     }
@@ -159,9 +170,9 @@ enum Music {
 
     private struct ScriptError: Error { let code: Int }
 
-    private static func run(_ source: String) throws -> NSAppleEventDescriptor {
+    private static func run(_ script: NSAppleScript?) throws -> NSAppleEventDescriptor {
         var info: NSDictionary?
-        let result = NSAppleScript(source: source)?.executeAndReturnError(&info)
+        let result = script?.executeAndReturnError(&info)
         guard info == nil, let result else {
             // -1743: the user said no to Automation access.
             throw ScriptError(code: info?[NSAppleScript.errorNumber] as? Int ?? 0)
@@ -182,6 +193,12 @@ final class Publisher {
     private var state = NowPlayingState.read()
     private var observers: [Any] = []
     private var refreshTask: Task<Void, Never>?
+    /// Covers of recently played albums, so coming back to one shows its cover at once.
+    private let covers: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.countLimit = 50
+        return cache
+    }()
 
     func start() {
         // Music posts this on every play, pause and track change.
@@ -189,7 +206,9 @@ final class Publisher {
         for command in PlayerCommand.allCases {
             observers.append(DistributedObserver(command.notification.rawValue) { [weak self] in
                 Music.send(command)
-                self?.refresh() // queued behind the command, so it reads the new state
+                // Music handles Apple events in order, so this read sees the command's effect. Most
+                // changes also post playerInfo; this catches the ones that don't, like restarting a song.
+                self?.refresh()
             })
         }
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
@@ -200,6 +219,9 @@ final class Publisher {
             MainActor.assumeIsolated { self?.refresh() }
         })
         self.observers = observers
+        if let cover = state.artwork {
+            covers.setObject(cover as NSData, forKey: Self.coverKey(artist: state.artist, album: state.album))
+        }
         // Redraw once at launch, so a new version of the widget shows straight away.
         WidgetCenter.shared.reloadTimelines(ofKind: NowPlayingState.widgetKind)
         refresh()
@@ -229,19 +251,23 @@ final class Publisher {
                 next = NowPlayingState(isPlaying: track.isPlaying, title: track.title,
                                        artist: track.artist, album: track.album,
                                        duration: track.duration, elapsed: track.elapsed, asOf: .now)
-                if track.album == state.album, track.artist == state.artist {
-                    next.artwork = state.artwork
-                }
+                next.artwork = covers.object(forKey: Self.coverKey(artist: track.artist, album: track.album)) as Data?
             }
             guard !Task.isCancelled else { return }
             // Song first, so a skip shows straight away; the cover follows once it's found.
             if !next.looksLike(state) { publish(next) }
             if case .track(let track) = snapshot, next.artwork == nil,
-               let image = await Music.artwork(artist: track.artist, album: track.album), !Task.isCancelled {
-                next.artwork = Music.thumbnail(image)
+               let image = await Music.artwork(artist: track.artist, album: track.album),
+               let cover = Music.thumbnail(image), !Task.isCancelled {
+                covers.setObject(cover as NSData, forKey: Self.coverKey(artist: track.artist, album: track.album))
+                next.artwork = cover
                 publish(next)
             }
         }
+    }
+
+    private static func coverKey(artist: String, album: String) -> NSString {
+        "\(artist)\n\(album)" as NSString
     }
 
     private func publish(_ next: NowPlayingState) {
