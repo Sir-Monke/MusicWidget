@@ -175,6 +175,8 @@ final class Publisher {
             MainActor.assumeIsolated { self?.refresh() }
         })
         self.observers = observers
+        // Redraw once at launch, so a new version of the widget shows straight away.
+        WidgetCenter.shared.reloadTimelines(ofKind: NowPlayingState.widgetKind)
         refresh()
     }
 

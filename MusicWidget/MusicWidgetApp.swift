@@ -60,6 +60,13 @@ func installAndRelaunch() {
         print("Music Widget: could not install into \(folder.path): \(error.localizedDescription)")
         return
     }
+    // macOS keeps the old widget running from memory; quit it so the new one loads.
+    let quitWidget = Process()
+    quitWidget.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+    quitWidget.arguments = ["-f", "NowPlayingWidget.appex/Contents/MacOS/NowPlayingWidget"]
+    try? quitWidget.run()
+    quitWidget.waitUntilExit()
+
     let open = Process()
     open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
     open.arguments = [target.path]
