@@ -76,10 +76,14 @@ enum Music {
         "tell application id \"\(bundleID)\" to \(command.rawValue)"
     }
 
+    static var isRunning: Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+    }
+
     /// Sends the button straight to Music as an Apple event and doesn't wait for a reply, so it never
     /// queues behind a slow read. If Music isn't running, AppleScript instead, which launches it.
     static func send(_ command: PlayerCommand) {
-        guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty else {
+        guard isRunning else {
             queue.async { _ = try? run(NSAppleScript(source: commandScript(command))) }
             return
         }
@@ -231,38 +235,45 @@ final class Publisher {
         refreshTask?.cancel()
         refreshTask = Task {
             var snapshot = await Music.snapshot()
-            // Mid-skip, Music briefly reports nothing playing. Only believe it if it lasts;
-            // the next song's notification cancels this wait.
-            if case .nothing = snapshot, !state.title.isEmpty {
-                try? await Task.sleep(for: .seconds(1.5))
+            // Mid-skip, or while a stream buffers, Music can say nothing is playing for a few seconds, and it
+            // doesn't always post again once the song starts. So while Music is open, keep checking every
+            // second for a while; after two the widget says Not Playing, in case it really has stopped.
+            // Any new notification cancels this and starts over.
+            for second in 1...15 {
+                guard case .nothing = snapshot, Music.isRunning else { break }
+                try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled else { return }
+                if second == 2 { await show(.nothing) }
                 snapshot = await Music.snapshot()
             }
+            await show(snapshot)
+        }
+    }
 
-            var next: NowPlayingState
-            switch snapshot {
-            case .failed:
-                return // transient, keep what's showing
-            case .nothing:
-                next = NowPlayingState()
-            case .notAuthorised:
-                next = NowPlayingState(needsPermission: true)
-            case .track(let track):
-                next = NowPlayingState(isPlaying: track.isPlaying, title: track.title,
-                                       artist: track.artist, album: track.album,
-                                       duration: track.duration, elapsed: track.elapsed, asOf: .now)
-                next.artwork = covers.object(forKey: Self.coverKey(artist: track.artist, album: track.album)) as Data?
-            }
-            guard !Task.isCancelled else { return }
-            // Song first, so a skip shows straight away; the cover follows once it's found.
-            if !next.looksLike(state) { publish(next) }
-            if case .track(let track) = snapshot, next.artwork == nil,
-               let image = await Music.artwork(artist: track.artist, album: track.album),
-               let cover = Music.thumbnail(image), !Task.isCancelled {
-                covers.setObject(cover as NSData, forKey: Self.coverKey(artist: track.artist, album: track.album))
-                next.artwork = cover
-                publish(next)
-            }
+    private func show(_ snapshot: Music.Snapshot) async {
+        var next: NowPlayingState
+        switch snapshot {
+        case .failed:
+            return // transient, keep what's showing
+        case .nothing:
+            next = NowPlayingState()
+        case .notAuthorised:
+            next = NowPlayingState(needsPermission: true)
+        case .track(let track):
+            next = NowPlayingState(isPlaying: track.isPlaying, title: track.title,
+                                   artist: track.artist, album: track.album,
+                                   duration: track.duration, elapsed: track.elapsed, asOf: .now)
+            next.artwork = covers.object(forKey: Self.coverKey(artist: track.artist, album: track.album)) as Data?
+        }
+        guard !Task.isCancelled else { return }
+        // Song first, so a skip shows straight away; the cover follows once it's found.
+        if !next.looksLike(state) { publish(next) }
+        if case .track(let track) = snapshot, next.artwork == nil,
+           let image = await Music.artwork(artist: track.artist, album: track.album),
+           let cover = Music.thumbnail(image), !Task.isCancelled {
+            covers.setObject(cover as NSData, forKey: Self.coverKey(artist: track.artist, album: track.album))
+            next.artwork = cover
+            publish(next)
         }
     }
 
