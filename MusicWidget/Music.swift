@@ -183,8 +183,17 @@ final class Publisher {
     func refresh() {
         refreshTask?.cancel()
         refreshTask = Task {
+            var snapshot = await Music.snapshot()
+            // Mid-skip, Music briefly reports nothing playing. Only believe it if it lasts;
+            // the next song's notification cancels this wait.
+            if case .nothing = snapshot, !state.title.isEmpty {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                snapshot = await Music.snapshot()
+            }
+
             var next: NowPlayingState
-            switch await Music.snapshot() {
+            switch snapshot {
             case .failed:
                 return // transient, keep what's showing
             case .nothing:
@@ -197,15 +206,23 @@ final class Publisher {
                                        duration: track.duration, elapsed: track.elapsed, asOf: .now)
                 if track.album == state.album, track.artist == state.artist {
                     next.artwork = state.artwork
-                } else if let image = await Music.artwork(artist: track.artist, album: track.album) {
-                    next.artwork = Music.thumbnail(image)
                 }
             }
-            guard !Task.isCancelled, !next.looksLike(state) else { return }
-            state = next
-            state.write()
-            WidgetCenter.shared.reloadTimelines(ofKind: NowPlayingState.widgetKind)
+            guard !Task.isCancelled else { return }
+            // Song first, so a skip shows straight away; the cover follows once it's found.
+            if !next.looksLike(state) { publish(next) }
+            if case .track(let track) = snapshot, next.artwork == nil,
+               let image = await Music.artwork(artist: track.artist, album: track.album), !Task.isCancelled {
+                next.artwork = Music.thumbnail(image)
+                publish(next)
+            }
         }
+    }
+
+    private func publish(_ next: NowPlayingState) {
+        state = next
+        state.write()
+        WidgetCenter.shared.reloadTimelines(ofKind: NowPlayingState.widgetKind)
     }
 }
 
