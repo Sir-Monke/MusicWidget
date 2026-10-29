@@ -47,6 +47,10 @@ Open `MusicWidget.xcodeproj` in Xcode and press Run. Music Widget copies itself 
 
 To redraw the images above, tick the `--render-docs` argument under Edit Scheme › Run › Arguments and press Run. They're saved as PNGs in `docs/frames`.
 
+## Thanks
+
+[swift-apple-music-widget](https://github.com/cgroening/swift-apple-music-widget) for showing that Apple Music songs outside your library answer some questions and refuse others, so each one has to be asked separately.
+
 ## Remove
 
 Remove the widget from the desktop, quit Music Widget in Activity Monitor, then drag it from Applications to the Bin.

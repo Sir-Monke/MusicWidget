@@ -110,6 +110,20 @@ func enableLoginItemOnce() {
     precondition(dates.first == playing.asOf && dates.count > 1 && dates.count <= 12 && dates.last! < end,
                  "a playing song gets a few redraws until it ends, at most 12")
     precondition(Music.fourCharCode("hook") == 0x686F_6F6B, "Apple event codes pack like the C literal 'hook'")
+
+    let info: [AnyHashable: Any] = ["Name": "Song", "Artist": "Artist", "Album": "Album",
+                                    "Player State": "Paused", "Total Time": 169_000]
+    if case .track(let track)? = Music.snapshot(playerInfo: info) {
+        precondition(track.title == "Song" && track.artist == "Artist" && track.album == "Album"
+                     && !track.isPlaying && track.duration == 169, "Music's notification reads as the song")
+    } else {
+        preconditionFailure("Music's notification reads as the song")
+    }
+    if case .nothing? = Music.snapshot(playerInfo: ["Player State": "Stopped"]) {} else {
+        preconditionFailure("Stopped reads as nothing playing")
+    }
+    precondition(Music.snapshot(playerInfo: ["Player State": "Playing"]) == nil,
+                 "a notification without a song name falls back to asking AppleScript")
     if let music = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Music.bundleID),
        let name = Bundle(url: music)?.object(forInfoDictionaryKey: "OSAScriptingDefinition") as? String,
        let dictionary = try? String(contentsOf: music.appendingPathComponent("Contents/Resources/\(name)"), encoding: .utf8) {
@@ -123,7 +137,8 @@ func enableLoginItemOnce() {
     precondition(paused.entryDates(from: playing.asOf) == [playing.asOf], "a paused song gets one")
     precondition(playing.entryDates(from: end.addingTimeInterval(5)).count == 1, "a song that's over gets one")
 
-    for source in [Music.statusScript, Music.artworkScript] + PlayerCommand.allCases.map(Music.commandScript) {
+    for source in [Music.statusScript, Music.artworkScript, Music.positionScript]
+                    + PlayerCommand.allCases.map(Music.commandScript) {
         var error: NSDictionary?
         let compiled = NSAppleScript(source: source)?.compileAndReturnError(&error) ?? false
         precondition(compiled, "script compiles against Music: \(error ?? [:])")

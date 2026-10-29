@@ -33,25 +33,34 @@ enum Music {
         }
     }
 
+    // Every property is asked for on its own: an Apple Music song that isn't in the library can refuse
+    // any one of them, and asking together loses the whole song when it does.
     // The `is running` checks stop a status or artwork read from launching Music.
     static let statusScript = """
         if application id "\(bundleID)" is running then
             tell application id "\(bundleID)"
-                if player state is not stopped then
-                    try
-                        set t to current track
-                        set p to 0
-                        set d to 0
-                        try
-                            set p to player position as real
-                        end try
-                        try
-                            set d to (duration of t) as real
-                        end try
-                        return {player state is playing, name of t, artist of t, album of t, p, d}
-                    end try
-                    return {"busy"}
-                end if
+                set s to player state
+                set n to ""
+                set a to ""
+                set b to ""
+                set p to 0
+                set d to 0
+                try
+                    set n to name of current track
+                end try
+                try
+                    set a to artist of current track
+                end try
+                try
+                    set b to album of current track
+                end try
+                try
+                    set p to player position as real
+                end try
+                try
+                    set d to (duration of current track) as real
+                end try
+                return {s is playing, s is stopped, n, a, b, p, d}
             end tell
         end if
         return {}
@@ -73,9 +82,12 @@ enum Music {
         end if
         """
 
+    static let positionScript = "tell application id \"\(bundleID)\" to player position"
+
     // Compiled once, on first use: compiling loads Music's whole dictionary, the slow part of every read.
     private static let status = compiled(statusScript)
     private static let artworkReader = compiled(artworkScript)
+    private static let positionReader = compiled(positionScript)
 
     private static func compiled(_ source: String) -> NSAppleScript? {
         let script = NSAppleScript(source: source)
@@ -122,21 +134,51 @@ enum Music {
         await onQueue { () -> Snapshot in
             do {
                 let list = try run(status)
-                if list.numberOfItems == 1 { return .busy }
-                guard list.numberOfItems == 6 else { return .nothing }
+                guard list.numberOfItems == 7 else { return .nothing }   // Music isn't open
+                let title = list.atIndex(3)?.stringValue ?? ""
+                guard !title.isEmpty else {
+                    // Music won't name the song: stopped, or still loading the next one.
+                    return list.atIndex(2)?.booleanValue == true ? .nothing : .busy
+                }
                 return .track(Track(
                     isPlaying: list.atIndex(1)?.booleanValue ?? false,
-                    title: list.atIndex(2)?.stringValue ?? "",
-                    artist: list.atIndex(3)?.stringValue ?? "",
-                    album: list.atIndex(4)?.stringValue ?? "",
-                    elapsed: list.atIndex(5)?.doubleValue ?? 0,
-                    duration: list.atIndex(6)?.doubleValue ?? 0))
+                    title: title,
+                    artist: list.atIndex(4)?.stringValue ?? "",
+                    album: list.atIndex(5)?.stringValue ?? "",
+                    elapsed: seconds(list.atIndex(6)?.doubleValue),
+                    duration: seconds(list.atIndex(7)?.doubleValue)))
             } catch let error as ScriptError where error.code == -1743 {
                 return .notAuthorised
             } catch {
                 return .failed
             }
         }
+    }
+
+    /// Music's playerInfo notification says what's playing, and unlike AppleScript it does so for every
+    /// song, including Apple Music songs that aren't in the library. Nil when it doesn't name the song.
+    static func snapshot(playerInfo info: [AnyHashable: Any]?) -> Snapshot? {
+        let state = info?["Player State"] as? String
+        if state == "Stopped" { return .nothing }
+        guard let title = info?["Name"] as? String else { return nil }
+        return .track(Track(
+            isPlaying: state == "Playing",
+            title: title,
+            artist: info?["Artist"] as? String ?? "",
+            album: info?["Album"] as? String ?? "",
+            elapsed: 0,
+            duration: seconds((info?["Total Time"] as? NSNumber).map { $0.doubleValue / 1000 })))
+    }
+
+    /// Where in the song Music is. Asked separately: it works even when Music won't describe the song.
+    static func position() async -> TimeInterval {
+        await onQueue { seconds((try? run(positionReader))?.doubleValue) }
+    }
+
+    /// A failed coercion can come back as NaN, which the state file's JSON can't hold.
+    private static func seconds(_ value: Double?) -> TimeInterval {
+        guard let value, value.isFinite, value >= 0 else { return 0 }
+        return value
     }
 
     static func artwork(artist: String, album: String) async -> NSImage? {
@@ -217,14 +259,16 @@ final class Publisher {
     }()
 
     func start() {
-        // Music posts this on every play, pause and track change.
-        var observers: [Any] = [DistributedObserver("com.apple.Music.playerInfo") { [weak self] in self?.refresh() }]
+        // Music posts this on every play, pause and song change.
+        var observers: [Any] = [DistributedObserver("com.apple.Music.playerInfo") { [weak self] note in
+            let snapshot = Music.snapshot(playerInfo: note.userInfo)
+            Task { @MainActor [weak self] in self?.playerInfo(snapshot) }
+        }]
         for command in PlayerCommand.allCases {
-            observers.append(DistributedObserver(command.notification.rawValue) { [weak self] in
+            observers.append(DistributedObserver(command.notification.rawValue) { [weak self] _ in
                 Music.send(command)
-                // Music handles Apple events in order, so this read sees the command's effect. Most
-                // changes also post playerInfo; this catches the ones that don't, like restarting a song.
-                self?.refresh()
+                // Most changes also post playerInfo; this read catches the rest, like restarting a song.
+                Task { @MainActor [weak self] in self?.refresh() }
             })
         }
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
@@ -258,6 +302,23 @@ final class Publisher {
                 snapshot = await Music.snapshot()
             }
             await show(snapshot)
+        }
+    }
+
+    /// Music's notification already names the song, so only the position is asked for.
+    func playerInfo(_ snapshot: Music.Snapshot?) {
+        guard let snapshot else { return refresh() }
+        refreshTask?.cancel()
+        refreshTask = Task {
+            if case .track(var track) = snapshot {
+                track.elapsed = await Music.position()
+                await show(.track(track))
+            } else {
+                // Mid-skip Music can post Stopped for a moment; the next song's notification cancels this.
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                await show(snapshot)
+            }
         }
     }
 
@@ -302,18 +363,17 @@ final class Publisher {
 /// Selector-based so it can ask for `.deliverImmediately`. This app is never
 /// active, and AppKit can otherwise hold distributed notifications for inactive apps.
 private final class DistributedObserver: NSObject {
-    private let action: @MainActor () -> Void
+    private let action: (Notification) -> Void
 
-    init(_ name: String, action: @escaping @MainActor () -> Void) {
+    init(_ name: String, action: @escaping (Notification) -> Void) {
         self.action = action
         super.init()
         DistributedNotificationCenter.default().addObserver(
-            self, selector: #selector(fire), name: NSNotification.Name(name), object: nil,
+            self, selector: #selector(fire(_:)), name: NSNotification.Name(name), object: nil,
             suspensionBehavior: .deliverImmediately)
     }
 
-    @objc private func fire() {
-        let action = self.action
-        Task { @MainActor in action() }
+    @objc private func fire(_ note: Notification) {
+        action(note)
     }
 }
