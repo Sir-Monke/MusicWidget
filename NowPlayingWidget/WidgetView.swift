@@ -56,7 +56,7 @@ struct WidgetView: View {
     /// Fixed, so the buttons beside it get a predictable amount of room.
     private var cover: some View {
         Color.clear
-            .frame(width: 100, height: 100)
+            .frame(width: 116, height: 116)
             .overlay {
                 if let artwork {
                     // fullColor, or the clear and tinted desktop styles paint the cover as a flat block.
@@ -160,13 +160,13 @@ struct WidgetView: View {
                 .fill(.white)
                 .overlay {
                     Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                         .offset(x: state.isPlaying ? 0 : 1.5)   // optical centre of the triangle
                         .contentTransition(.symbolEffect(.replace))
                         .blendMode(.destinationOut)
                 }
                 .compositingGroup()
-                .frame(width: 36, height: 36)
+                .frame(width: 34, height: 34)
                 .invalidatableContent()
         }
         .buttonStyle(.plain)
@@ -174,12 +174,12 @@ struct WidgetView: View {
     }
 
     private func skipButton(_ command: PlayerCommand, symbol: String, label: String) -> some View {
-        button(command, symbol: symbol, size: 16, weight: .semibold, width: 30, label: label)
+        button(command, symbol: symbol, size: 15, weight: .semibold, width: 28, label: label)
     }
 
     /// Shuffle and repeat: lit when on, dimmed when off.
     private func toggleButton(_ command: PlayerCommand, symbol: String, on: Bool, label: String) -> some View {
-        button(command, symbol: symbol, size: 13, weight: .bold, width: 26, label: label)
+        button(command, symbol: symbol, size: 12, weight: .bold, width: 22, label: label)
             .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.white.opacity(0.4)))
             .accessibilityValue(on ? "On" : "Off")
     }
