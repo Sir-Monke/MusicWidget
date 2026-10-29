@@ -13,7 +13,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.webp">
-    <img src="docs/hero-light.webp" width="520" alt="The Music Widget on the desktop: album cover on the left, song and artist on the right, a progress bar with elapsed and remaining time, and back, pause and skip buttons">
+    <img src="docs/hero-light.webp" width="520" alt="The Music Widget on the desktop: album cover on the left, song and artist on the right with a favourite heart, a progress bar with elapsed and remaining time, and shuffle, back, pause, skip and repeat buttons">
   </picture>
 </p>
 
@@ -30,7 +30,7 @@
 - **Two tiles wide.** Album cover on the left, song and artist on the right, controls underneath.
 - **Shows where you are.** A progress bar with time played and time left, running live.
 - **Keeps up.** Slides to the next song the moment Music skips, pauses or moves on.
-- **Controls Music.** Back, play/pause and skip, straight from the desktop.
+- **Controls Music.** Back, play/pause and skip, plus shuffle, repeat and favourite, straight from the desktop.
 - **Private.** Talks only to Music on your Mac. When a streamed song has no cover, it looks one up on the iTunes Search API.
 
 ## How it works

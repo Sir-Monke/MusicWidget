@@ -111,6 +111,16 @@ func enableLoginItemOnce() {
                  "a playing song gets a few redraws until it ends, at most 12")
     precondition(Music.fourCharCode("hook") == 0x686F_6F6B, "Apple event codes pack like the C literal 'hook'")
 
+    var shuffled = playing
+    shuffled.shuffle = true
+    precondition(!shuffled.looksLike(playing), "turning shuffle on redraws the widget")
+    var hearted = playing
+    hearted.favourite = true
+    precondition(!hearted.looksLike(playing), "favouriting redraws it")
+    precondition(PlayerCommand.allCases.filter { $0.transport == nil }
+                 .allSatisfy { Music.commandScript($0).contains("tell application") },
+                 "every toggle has a script of its own")
+
     let info: [AnyHashable: Any] = ["Name": "Song", "Artist": "Artist", "Album": "Album",
                                     "Player State": "Paused", "Total Time": 169_000]
     if case .track(let track)? = Music.snapshot(playerInfo: info) {
@@ -128,8 +138,9 @@ func enableLoginItemOnce() {
        let name = Bundle(url: music)?.object(forInfoDictionaryKey: "OSAScriptingDefinition") as? String,
        let dictionary = try? String(contentsOf: music.appendingPathComponent("Contents/Resources/\(name)"), encoding: .utf8) {
         for command in PlayerCommand.allCases {
-            precondition(dictionary.contains("name=\"\(command.rawValue)\" code=\"hook\(Music.eventID(command))\""),
-                         "Music's dictionary has \(command.rawValue) as hook\(Music.eventID(command))")
+            guard let transport = command.transport else { continue }
+            precondition(dictionary.contains("name=\"\(transport.name)\" code=\"hook\(transport.eventID)\""),
+                         "Music's dictionary has \(transport.name) as hook\(transport.eventID)")
         }
     } else {
         print("selftest: Music's scripting dictionary not found, command codes unchecked")
@@ -137,7 +148,7 @@ func enableLoginItemOnce() {
     precondition(paused.entryDates(from: playing.asOf) == [playing.asOf], "a paused song gets one")
     precondition(playing.entryDates(from: end.addingTimeInterval(5)).count == 1, "a song that's over gets one")
 
-    for source in [Music.statusScript, Music.artworkScript, Music.positionScript]
+    for source in [Music.statusScript, Music.settingsScript, Music.artworkScript]
                     + PlayerCommand.allCases.map(Music.commandScript) {
         var error: NSDictionary?
         let compiled = NSAppleScript(source: source)?.compileAndReturnError(&error) ?? false
@@ -174,7 +185,8 @@ func enableLoginItemOnce() {
     }
     let widget = WidgetView(state: NowPlayingState(
         isPlaying: true, title: "Low Sun Over the Harbour", artist: "Evening Tide", album: "Evening Tide",
-        artwork: Music.thumbnail(cover), duration: 236, elapsed: 83, asOf: .now))
+        artwork: Music.thumbnail(cover), duration: 236, elapsed: 83, asOf: .now,
+        shuffle: true, favourite: true))
 
     try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let desktops: [(String, [Color])] = [

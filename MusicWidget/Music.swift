@@ -2,18 +2,26 @@ import AppKit
 import WidgetKit
 
 /// Talks to Music.app. NSAppleScript isn't thread-safe, so every script runs on one serial queue;
-/// the buttons skip that queue and send Apple events directly (see `send`).
+/// the transport buttons skip that queue and send Apple events directly (see `send`).
 enum Music {
     static let bundleID = "com.apple.Music"
     private static let queue = DispatchQueue(label: "music.applescript")
 
     struct Track {
-        var isPlaying: Bool
-        var title: String
-        var artist: String
-        var album: String
-        var elapsed: TimeInterval
-        var duration: TimeInterval
+        var isPlaying = false
+        var title = ""
+        var artist = ""
+        var album = ""
+        var duration: TimeInterval = 0
+        var settings = Settings()
+    }
+
+    /// Everything that isn't the song itself: where we are in it, and the three toggles.
+    struct Settings {
+        var elapsed: TimeInterval = 0
+        var shuffle = false
+        var repeatMode = NowPlayingState.RepeatMode.off
+        var favourite = false
     }
 
     enum Snapshot {
@@ -33,9 +41,34 @@ enum Music {
         }
     }
 
+    /// Reads the three toggles and the position. Kept apart from the song itself so the
+    /// notification, which already names the song, can ask for just this.
+    private static let settingsBody = """
+            set p to 0
+            set sh to false
+            set rp to 0
+            set fv to false
+            try
+                set p to player position as real
+            end try
+            try
+                set sh to shuffle enabled
+            end try
+            try
+                if song repeat is all then
+                    set rp to 1
+                else if song repeat is one then
+                    set rp to 2
+                end if
+            end try
+            try
+                set fv to favorited of current track
+            end try
+        """
+
     // Every property is asked for on its own: an Apple Music song that isn't in the library can refuse
     // any one of them, and asking together loses the whole song when it does.
-    // The `is running` checks stop a status or artwork read from launching Music.
+    // The `is running` checks stop a read from launching Music.
     static let statusScript = """
         if application id "\(bundleID)" is running then
             tell application id "\(bundleID)"
@@ -43,7 +76,6 @@ enum Music {
                 set n to ""
                 set a to ""
                 set b to ""
-                set p to 0
                 set d to 0
                 try
                     set n to name of current track
@@ -55,12 +87,20 @@ enum Music {
                     set b to album of current track
                 end try
                 try
-                    set p to player position as real
-                end try
-                try
                     set d to (duration of current track) as real
                 end try
-                return {s is playing, s is stopped, n, a, b, p, d}
+        \(settingsBody)
+                return {s is playing, s is stopped, n, a, b, d, p, sh, rp, fv}
+            end tell
+        end if
+        return {}
+        """
+
+    static let settingsScript = """
+        if application id "\(bundleID)" is running then
+            tell application id "\(bundleID)"
+        \(settingsBody)
+                return {p, sh, rp, fv}
             end tell
         end if
         return {}
@@ -82,12 +122,36 @@ enum Music {
         end if
         """
 
-    static let positionScript = "tell application id \"\(bundleID)\" to player position"
+    static func commandScript(_ command: PlayerCommand) -> String {
+        let body = switch command {
+        case .shuffle:
+            "set shuffle enabled to not (shuffle enabled)"
+        case .repeatMode:
+            """
+            if song repeat is off then
+                set song repeat to all
+            else if song repeat is all then
+                set song repeat to one
+            else
+                set song repeat to off
+            end if
+            """
+        case .favourite:
+            """
+            try
+                set favorited of current track to not (favorited of current track)
+            end try
+            """
+        default:
+            command.transport?.name ?? ""
+        }
+        return "tell application id \"\(bundleID)\"\n\(body)\nend tell"
+    }
 
     // Compiled once, on first use: compiling loads Music's whole dictionary, the slow part of every read.
     private static let status = compiled(statusScript)
+    private static let settingsReader = compiled(settingsScript)
     private static let artworkReader = compiled(artworkScript)
-    private static let positionReader = compiled(positionScript)
 
     private static func compiled(_ source: String) -> NSAppleScript? {
         let script = NSAppleScript(source: source)
@@ -95,35 +159,22 @@ enum Music {
         return script
     }
 
-    static func commandScript(_ command: PlayerCommand) -> String {
-        "tell application id \"\(bundleID)\" to \(command.rawValue)"
-    }
-
     static var isRunning: Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
     }
 
-    /// Sends the button straight to Music as an Apple event and doesn't wait for a reply, so it never
-    /// queues behind a slow read. If Music isn't running, AppleScript instead, which launches it.
+    /// A transport button goes straight to Music as an Apple event, without waiting for a reply, so it
+    /// never queues behind a slow read. The toggles are property changes, so they go as AppleScript.
     static func send(_ command: PlayerCommand) {
-        guard isRunning else {
+        guard let transport = command.transport, isRunning else {
             queue.async { _ = try? run(NSAppleScript(source: commandScript(command))) }
             return
         }
         let event = NSAppleEventDescriptor(
-            eventClass: fourCharCode("hook"), eventID: fourCharCode(eventID(command)),
+            eventClass: fourCharCode("hook"), eventID: fourCharCode(transport.eventID),
             targetDescriptor: NSAppleEventDescriptor(bundleIdentifier: bundleID),
             returnID: -1, transactionID: 0)   // kAutoGenerateReturnID, kAnyTransactionID
         _ = try? event.sendEvent(options: [.noReply], timeout: 1)
-    }
-
-    /// Music's own code for each command, after the "hook" class: `next track` is hookNext.
-    static func eventID(_ command: PlayerCommand) -> String {
-        switch command {
-        case .previous: "Prev"
-        case .playPause: "PlPs"
-        case .next: "Next"
-        }
     }
 
     static func fourCharCode(_ code: String) -> FourCharCode {
@@ -134,7 +185,7 @@ enum Music {
         await onQueue { () -> Snapshot in
             do {
                 let list = try run(status)
-                guard list.numberOfItems == 7 else { return .nothing }   // Music isn't open
+                guard list.numberOfItems == 10 else { return .nothing }   // Music isn't open
                 let title = list.atIndex(3)?.stringValue ?? ""
                 guard !title.isEmpty else {
                     // Music won't name the song: stopped, or still loading the next one.
@@ -145,8 +196,8 @@ enum Music {
                     title: title,
                     artist: list.atIndex(4)?.stringValue ?? "",
                     album: list.atIndex(5)?.stringValue ?? "",
-                    elapsed: seconds(list.atIndex(6)?.doubleValue),
-                    duration: seconds(list.atIndex(7)?.doubleValue)))
+                    duration: seconds(list.atIndex(6)?.doubleValue),
+                    settings: settings(from: list, firstIndex: 7)))
             } catch let error as ScriptError where error.code == -1743 {
                 return .notAuthorised
             } catch {
@@ -166,13 +217,24 @@ enum Music {
             title: title,
             artist: info?["Artist"] as? String ?? "",
             album: info?["Album"] as? String ?? "",
-            elapsed: 0,
             duration: seconds((info?["Total Time"] as? NSNumber).map { $0.doubleValue / 1000 })))
     }
 
-    /// Where in the song Music is. Asked separately: it works even when Music won't describe the song.
-    static func position() async -> TimeInterval {
-        await onQueue { seconds((try? run(positionReader))?.doubleValue) }
+    /// Where Music is in the song, and the three toggles. Asked on its own: this works even
+    /// when Music won't describe the song.
+    static func settings() async -> Settings {
+        await onQueue {
+            guard let list = try? run(settingsReader), list.numberOfItems == 4 else { return Settings() }
+            return settings(from: list, firstIndex: 1)
+        }
+    }
+
+    private static func settings(from list: NSAppleEventDescriptor, firstIndex i: Int) -> Settings {
+        Settings(
+            elapsed: seconds(list.atIndex(i)?.doubleValue),
+            shuffle: list.atIndex(i + 1)?.booleanValue ?? false,
+            repeatMode: NowPlayingState.RepeatMode(rawValue: Int(list.atIndex(i + 2)?.int32Value ?? 0)) ?? .off,
+            favourite: list.atIndex(i + 3)?.booleanValue ?? false)
     }
 
     /// A failed coercion can come back as NaN, which the state file's JSON can't hold.
@@ -267,7 +329,8 @@ final class Publisher {
         for command in PlayerCommand.allCases {
             observers.append(DistributedObserver(command.notification.rawValue) { [weak self] _ in
                 Music.send(command)
-                // Most changes also post playerInfo; this read catches the rest, like restarting a song.
+                // Shuffle, repeat and favourite post nothing at all, and some changes to the song don't
+                // either, like restarting one. This read catches them; the rest arrive as playerInfo.
                 Task { @MainActor [weak self] in self?.refresh() }
             })
         }
@@ -305,13 +368,13 @@ final class Publisher {
         }
     }
 
-    /// Music's notification already names the song, so only the position is asked for.
+    /// Music's notification already names the song, so only the settings are asked for.
     func playerInfo(_ snapshot: Music.Snapshot?) {
         guard let snapshot else { return refresh() }
         refreshTask?.cancel()
         refreshTask = Task {
             if case .track(var track) = snapshot {
-                track.elapsed = await Music.position()
+                track.settings = await Music.settings()
                 await show(.track(track))
             } else {
                 // Mid-skip Music can post Stopped for a moment; the next song's notification cancels this.
@@ -334,7 +397,9 @@ final class Publisher {
         case .track(let track):
             next = NowPlayingState(isPlaying: track.isPlaying, title: track.title,
                                    artist: track.artist, album: track.album,
-                                   duration: track.duration, elapsed: track.elapsed, asOf: .now)
+                                   duration: track.duration, elapsed: track.settings.elapsed, asOf: .now,
+                                   shuffle: track.settings.shuffle, repeatMode: track.settings.repeatMode,
+                                   favourite: track.settings.favourite)
             next.artwork = covers.object(forKey: Self.coverKey(artist: track.artist, album: track.album)) as Data?
         }
         guard !Task.isCancelled else { return }

@@ -19,10 +19,13 @@ struct WidgetView: View {
         HStack(spacing: 14) {
             cover
             VStack(alignment: .leading, spacing: 0) {
-                titles
-                Spacer(minLength: 6)
+                HStack(alignment: .top, spacing: 6) {
+                    titles
+                    if !state.title.isEmpty { favouriteButton }
+                }
+                Spacer(minLength: 8)
                 if state.duration > 0 {
-                    progress.padding(.bottom, 6)
+                    progress.padding(.bottom, 4)
                 }
                 controls
             }
@@ -50,9 +53,10 @@ struct WidgetView: View {
 
     private var trackID: String { "\(state.title)\n\(state.artist)" }
 
+    /// Fixed, so the buttons beside it get a predictable amount of room.
     private var cover: some View {
         Color.clear
-            .aspectRatio(1, contentMode: .fit)
+            .frame(width: 100, height: 100)
             .overlay {
                 if let artwork {
                     // fullColor, or the clear and tinted desktop styles paint the cover as a flat block.
@@ -87,6 +91,7 @@ struct WidgetView: View {
                     .lineLimit(1)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .id(trackID)
         .transition(.push(from: .bottom))
     }
@@ -130,11 +135,20 @@ struct WidgetView: View {
         .foregroundStyle(.secondary)
     }
 
+    /// Back, play and skip sit together in the middle; shuffle and repeat keep to the edges,
+    /// so the two groups read apart instead of as one crowded row.
     private var controls: some View {
-        HStack(spacing: 22) {
-            skipButton(.previous, symbol: "backward.fill", label: "Previous")
-            playButton
-            skipButton(.next, symbol: "forward.fill", label: "Next")
+        HStack(spacing: 0) {
+            toggleButton(.shuffle, symbol: "shuffle", on: state.shuffle, label: "Shuffle")
+            Spacer(minLength: 8)
+            HStack(spacing: 6) {
+                skipButton(.previous, symbol: "backward.fill", label: "Previous")
+                playButton
+                skipButton(.next, symbol: "forward.fill", label: "Next")
+            }
+            Spacer(minLength: 8)
+            toggleButton(.repeatMode, symbol: state.repeatMode == .one ? "repeat.1" : "repeat",
+                         on: state.repeatMode != .off, label: "Repeat")
         }
         .frame(maxWidth: .infinity)
     }
@@ -146,13 +160,13 @@ struct WidgetView: View {
                 .fill(.white)
                 .overlay {
                     Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                         .offset(x: state.isPlaying ? 0 : 1.5)   // optical centre of the triangle
                         .contentTransition(.symbolEffect(.replace))
                         .blendMode(.destinationOut)
                 }
                 .compositingGroup()
-                .frame(width: 40, height: 40)
+                .frame(width: 36, height: 36)
                 .invalidatableContent()
         }
         .buttonStyle(.plain)
@@ -160,11 +174,39 @@ struct WidgetView: View {
     }
 
     private func skipButton(_ command: PlayerCommand, symbol: String, label: String) -> some View {
+        button(command, symbol: symbol, size: 16, weight: .semibold, width: 30, label: label)
+    }
+
+    /// Shuffle and repeat: lit when on, dimmed when off.
+    private func toggleButton(_ command: PlayerCommand, symbol: String, on: Bool, label: String) -> some View {
+        button(command, symbol: symbol, size: 13, weight: .bold, width: 26, label: label)
+            .foregroundStyle(on ? AnyShapeStyle(.white) : AnyShapeStyle(.white.opacity(0.4)))
+            .accessibilityValue(on ? "On" : "Off")
+    }
+
+    private var favouriteButton: some View {
+        Button(intent: PlayerIntent(.favourite)) {
+            Image(systemName: state.favourite ? "heart.fill" : "heart")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(state.favourite ? AnyShapeStyle(.white) : AnyShapeStyle(.white.opacity(0.4)))
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+                .invalidatableContent()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Favourite")
+        .accessibilityValue(state.favourite ? "On" : "Off")
+    }
+
+    private func button(_ command: PlayerCommand, symbol: String, size: CGFloat,
+                        weight: Font.Weight, width: CGFloat, label: String) -> some View {
         Button(intent: PlayerIntent(command)) {
             Image(systemName: symbol)
-                .font(.system(size: 17, weight: .semibold))
-                .frame(width: 34, height: 34)
+                .font(.system(size: size, weight: weight))
+                .frame(width: width, height: 30)
                 .contentShape(Rectangle())
+                .invalidatableContent()
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)

@@ -5,6 +5,8 @@ import Foundation
 struct NowPlayingState: Codable, Equatable {
     static let widgetKind = "NowPlaying"
 
+    enum RepeatMode: Int, Codable { case off, all, one }
+
     var isPlaying = false
     var title = ""
     var artist = ""
@@ -16,6 +18,10 @@ struct NowPlayingState: Codable, Equatable {
     /// How far into the song Music was at `asOf`.
     var elapsed: TimeInterval = 0
     var asOf = Date.distantPast
+    var shuffle = false
+    var repeatMode = RepeatMode.off
+    /// Whether the song is favourited in Music. Always false for songs it won't say.
+    var favourite = false
 
     /// When the song would have started had it played straight through, so the widget's clock can run by itself.
     var start: Date { asOf.addingTimeInterval(-elapsed) }
@@ -28,7 +34,7 @@ struct NowPlayingState: Codable, Equatable {
         return stride(from: 0, to: left, by: max(5, left / 12)).map { now.addingTimeInterval($0) }
     }
 
-    /// Same song and state, with the clock within a second of where it was. Music posts several
+    /// Same song and settings, with the clock within a second of where it was. Music posts several
     /// notifications for one change, and this stops each of them reloading the widget.
     func looksLike(_ other: NowPlayingState) -> Bool {
         let drift = isPlaying ? abs(start.timeIntervalSince(other.start)) : abs(elapsed - other.elapsed)
@@ -61,11 +67,20 @@ struct NowPlayingState: Codable, Equatable {
 
 /// Widget buttons post these and the app runs them, since only the app can talk to Music.
 enum PlayerCommand: String, CaseIterable {
-    case previous = "previous track"
-    case playPause = "playpause"
-    case next = "next track"
+    case previous, playPause, next, shuffle, repeatMode, favourite
 
-    var notification: Notification.Name { Notification.Name("io.github.sir-monke.musicwidget.\(self)") }
+    /// Music's own name and Apple event code, for the three that are one word to Music and
+    /// need to be instant. The rest are property changes, and go as AppleScript.
+    var transport: (name: String, eventID: String)? {
+        switch self {
+        case .previous: ("previous track", "Prev")
+        case .playPause: ("playpause", "PlPs")
+        case .next: ("next track", "Next")
+        default: nil
+        }
+    }
+
+    var notification: Notification.Name { Notification.Name("io.github.sir-monke.musicwidget.\(rawValue)") }
 }
 
 /// A widget button. The widget is sandboxed and can't reach Music, so it hands the command to the app.
