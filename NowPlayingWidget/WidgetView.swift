@@ -3,8 +3,8 @@ import WidgetKit
 
 struct WidgetView: View {
     let state: NowPlayingState
-    /// For the README render: ImageRenderer can't draw the system progress bar, so draw a still one.
-    var isSnapshot = false
+    /// The moment this entry shows, which sets how far along the bar is.
+    var now = Date.now
 
     var body: some View {
         face
@@ -91,43 +91,43 @@ struct WidgetView: View {
         .transition(.push(from: .bottom))
     }
 
-    /// Runs by itself while playing, so the widget never reloads just to move the bar.
+    /// Drawn by hand: macOS widgets don't reliably show the system progress bar. While playing the
+    /// times tick by themselves and the timeline's entries move the bar.
     private var progress: some View {
-        HStack(spacing: 8) {
-            if state.isPlaying && !isSnapshot {
-                let song = state.start...state.start.addingTimeInterval(state.duration)
-                Text(timerInterval: song, countsDown: false)
-                    .frame(width: 34, alignment: .leading)
-                    .multilineTextAlignment(.leading)
-                ProgressView(timerInterval: song, countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
-                (Text("-") + Text(timerInterval: song, countsDown: true))
-                    .frame(width: 38, alignment: .trailing)
-                    .multilineTextAlignment(.trailing)
-            } else {
-                let elapsed = min(max(0, state.isPlaying ? Date.now.timeIntervalSince(state.start) : state.elapsed),
-                                  state.duration)
-                Text(clock(elapsed))
-                    .frame(width: 34, alignment: .leading)
-                if isSnapshot {
-                    Capsule()
-                        .fill(.white.opacity(0.25))
-                        .frame(height: 4)
-                        .overlay(alignment: .leading) {
-                            GeometryReader { bar in
-                                Capsule().fill(.white).frame(width: bar.size.width * elapsed / state.duration)
-                            }
-                        }
+        let elapsed = min(max(0, state.isPlaying ? now.timeIntervalSince(state.start) : state.elapsed), state.duration)
+        let song = state.start...state.start.addingTimeInterval(state.duration)
+        return HStack(spacing: 8) {
+            Group {
+                if state.isPlaying {
+                    Text(timerInterval: song, countsDown: false)
                 } else {
-                    ProgressView(value: elapsed, total: state.duration)
+                    Text(clock(elapsed))
                 }
-                Text("-" + clock(state.duration - elapsed))
-                    .frame(width: 38, alignment: .trailing)
             }
+            .frame(width: 34, alignment: .leading)
+            .multilineTextAlignment(.leading)
+
+            Capsule()
+                .fill(.white.opacity(0.25))
+                .frame(height: 4)
+                .overlay(alignment: .leading) {
+                    GeometryReader { bar in
+                        Capsule().fill(.white).frame(width: bar.size.width * elapsed / state.duration)
+                    }
+                }
+
+            Group {
+                if state.isPlaying {
+                    Text("-") + Text(timerInterval: song, countsDown: true)
+                } else {
+                    Text("-" + clock(state.duration - elapsed))
+                }
+            }
+            .frame(width: 38, alignment: .trailing)
+            .multilineTextAlignment(.trailing)
         }
         .font(.system(size: 10.5, weight: .medium).monospacedDigit())
         .foregroundStyle(.secondary)
-        .progressViewStyle(.linear)
-        .tint(.white)
     }
 
     private var controls: some View {

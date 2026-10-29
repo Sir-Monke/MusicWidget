@@ -5,7 +5,7 @@ import WidgetKit
 struct NowPlayingWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: NowPlayingState.widgetKind, provider: Provider()) { entry in
-            WidgetView(state: entry.state)
+            WidgetView(state: entry.state, now: entry.date)
         }
         .configurationDisplayName("Now Playing")
         .description("What's playing in Music.")
@@ -29,7 +29,9 @@ struct Provider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
-        // The app reloads the widget whenever Music changes; the progress bar and times run by themselves.
-        completion(Timeline(entries: [Entry(state: .read())], policy: .never))
+        // The app reloads the widget whenever Music changes. In between, these entries move the
+        // progress bar along; the times tick by themselves.
+        let state = NowPlayingState.read()
+        completion(Timeline(entries: state.entryDates().map { Entry(date: $0, state: state) }, policy: .never))
     }
 }

@@ -98,6 +98,13 @@ func enableLoginItemOnce() {
     precondition(!paused.looksLike(playing), "pausing does")
     precondition(abs(playing.start.timeIntervalSince(playing.asOf) + 50) < 0.001, "the clock starts where the song began")
 
+    let dates = playing.entryDates(from: playing.asOf)
+    let end = playing.start.addingTimeInterval(playing.duration)
+    precondition(dates.first == playing.asOf && dates.count > 1 && dates.count <= 40 && dates.last! < end,
+                 "a playing song gets a redraw every few seconds until it ends, at most 40")
+    precondition(paused.entryDates(from: playing.asOf) == [playing.asOf], "a paused song gets one")
+    precondition(playing.entryDates(from: end.addingTimeInterval(5)).count == 1, "a song that's over gets one")
+
     for source in [Music.statusScript, Music.artworkScript] + PlayerCommand.allCases.map(Music.commandScript) {
         var error: NSDictionary?
         let compiled = NSAppleScript(source: source)?.compileAndReturnError(&error) ?? false
@@ -134,7 +141,7 @@ func enableLoginItemOnce() {
     }
     let widget = WidgetView(state: NowPlayingState(
         isPlaying: true, title: "Low Sun Over the Harbour", artist: "Evening Tide", album: "Evening Tide",
-        artwork: Music.thumbnail(cover), duration: 236, elapsed: 83, asOf: .now), isSnapshot: true)
+        artwork: Music.thumbnail(cover), duration: 236, elapsed: 83, asOf: .now))
 
     try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let desktops: [(String, [Color])] = [
